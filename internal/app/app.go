@@ -102,6 +102,7 @@ type App struct {
 	treeRow  int
 	reveal   string // a path to choose in the tree once its row shows
 	filter   treeFilter
+	hidden   *hiddenNameRules
 	watchErr error
 	watching bool
 	ignored  *git.Ignored // what git ignores in the workspace, dimmed in the tree and not watched
@@ -756,27 +757,6 @@ func (a *App) computeNested(d *dirState) {
 		}
 		d.nested[pe.Path] = append(d.nested[pe.Path], ce.Path)
 	}
-}
-
-func (a *App) hiddenPath(p string) bool {
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(a.root, p)
-	}
-	rel, err := filepath.Rel(a.root, p)
-	if err != nil {
-		return false
-	}
-	if a.cfg == nil {
-		return false
-	}
-	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
-		for _, name := range strings.Split(a.cfg.HiddenNames, ",") {
-			if name = strings.TrimSpace(name); name != "" && part == name {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 const (

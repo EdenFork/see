@@ -4842,6 +4842,38 @@ func (msgs Messages) MsgHiddenNames() string {
 	return Catalog.Format(msgs.locale, "msgHiddenNames", nil)
 }
 
+// HiddenNamePattern says "Hide by regular expression"
+// in the language the app shows.
+func HiddenNamePattern() string { return In(i18n.Locale()).HiddenNamePattern() }
+
+// HiddenNamePattern says "Hide by regular expression"
+// in the language of msgs.
+func (msgs Messages) HiddenNamePattern() string {
+	return Catalog.Format(msgs.locale, "hiddenNamePattern", nil)
+}
+
+// HiddenNamePatternHelp says "Enter one pattern per line. Hide names matching any pattern."
+// in the language the app shows.
+func HiddenNamePatternHelp() string { return In(i18n.Locale()).HiddenNamePatternHelp() }
+
+// HiddenNamePatternHelp says "Enter one pattern per line. Hide names matching any pattern."
+// in the language of msgs.
+func (msgs Messages) HiddenNamePatternHelp() string {
+	return Catalog.Format(msgs.locale, "hiddenNamePatternHelp", nil)
+}
+
+// HiddenNamePatternError says "Invalid pattern on line {line}"
+// in the language the app shows.
+func HiddenNamePatternError(line string) string {
+	return In(i18n.Locale()).HiddenNamePatternError(line)
+}
+
+// HiddenNamePatternError says "Invalid pattern on line {line}"
+// in the language of msgs.
+func (msgs Messages) HiddenNamePatternError(line string) string {
+	return Catalog.Format(msgs.locale, "hiddenNamePatternError", map[string]any{"line": line})
+}
+
 // MsgHideMatchingFilesAndFoldersInTheProject says "Hide matching files and folders in the project navigator. Separate names with commas."
 // in the language the app shows.
 func MsgHideMatchingFilesAndFoldersInTheProject() string {

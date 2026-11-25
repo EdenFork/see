@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +47,7 @@ type settingsPane struct {
 }
 
 var settingsPanes = []settingsPane{
-	{"general", "General", icGear, ui.RGB(0x8e, 0x8e, 0x93), 0, "appearance light dark system theme reopen launch recent folders shell command install uninstall path cli"},
+	{"general", "General", icGear, ui.RGB(0x8e, 0x8e, 0x93), 0, "appearance light dark system theme reopen launch recent folders shell command install uninstall path cli hidden names regex ignore 隐藏 忽略 正则"},
 	{"editor", "Editor", icLines, ui.RGB(0x0a, 0x84, 0xff), 0, "font size line numbers relative soft wrap minimap page guide column 页面参考线"},
 	{"terminal", "Terminal", icPrompt, ui.RGB(0x2c, 0x2c, 0x2e), 0, "shell font size copy on select panel external ghostty rex seedmux"},
 	{"notifications", "Notifications", icPrompt, ui.RGB(0xff, 0x95, 0x00), 1, "notify waiting done failed sound dock badge bounce"},
@@ -59,6 +60,7 @@ var settingsPanes = []settingsPane{
 // settingsState is the settings window's own state.
 type settingsState struct {
 	shellCommandMessage string
+	invalidNameRules    *hiddenNameRules
 	termFeaturesDraft   string
 	editorFeaturesDraft string
 	envDraft            string
@@ -517,6 +519,35 @@ func statusCard(c *ui.Context, icon *ui.SVG, tile ui.Color, name, status string,
 
 // ----- Panes -----
 
+func (a *App) hiddenNamePatternRow(c *ui.Context) {
+	label, detail := locales.HiddenNamePattern(), locales.HiddenNamePatternHelp()
+	rules := a.hiddenRules()
+	if draft := a.settings.invalidNameRules; draft != nil {
+		rules = draft
+	}
+	if rules.invalidLine != 0 {
+		detail = locales.HiddenNamePatternError(strconv.Itoa(rules.invalidLine))
+	}
+	labeled(c, label, detail)
+	pattern := rules.pattern
+	field := ui.TextArea(c, &pattern).Label(label).Placeholder("\\.csproj$\n\\.sln$").
+		WidthPercent(48).MaxWidth(260).Height(68)
+	if rules.invalidLine != 0 {
+		field.Error(detail)
+	}
+	if field.Changed() {
+		edited := compileHiddenNameRules(a.cfg.HiddenNames, pattern)
+		if edited.invalidLine != 0 {
+			a.settings.invalidNameRules = edited
+			return
+		}
+		a.settings.invalidNameRules = nil
+		a.hidden = edited
+		a.cfg.HiddenNamePattern = pattern
+		a.settingsChanged()
+	}
+}
+
 func (a *App) generalPane(c *ui.Context) {
 	s := &a.settings
 	switch a.cfg.Appearance {
@@ -572,11 +603,11 @@ func (a *App) generalPane(c *ui.Context) {
 		},
 		func() {
 			labeled(c, locales.MsgHiddenNames(), locales.MsgHideMatchingFilesAndFoldersInTheProject())
-			if ui.TextInput(c, &a.cfg.HiddenNames).Label(locales.MsgHiddenNames()).Placeholder(".DS_Store").Width(200).Changed() {
-				a.filter.forQuery = ""
+			if ui.TextInput(c, &a.cfg.HiddenNames).Label(locales.MsgHiddenNames()).Placeholder(".DS_Store").WidthPercent(48).MaxWidth(200).Changed() {
 				a.settingsChanged()
 			}
 		},
+		func() { a.hiddenNamePatternRow(c) },
 		func() {
 			labeled(c, locales.MsgDiffLayout(), locales.MsgShowDiffsInlineOrSideBySide())
 			layout := 0

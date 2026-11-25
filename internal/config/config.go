@@ -71,6 +71,7 @@ type Config struct {
 	DiffLayout           string               `json:"diffLayout,omitempty"`  // "auto", "unified", "split"
 	GitStatus            bool                 `json:"gitStatus,omitempty"`
 	HiddenNames          string               `json:"hiddenNames"`
+	HiddenNamePattern    string               `json:"hiddenNamePattern,omitempty"`
 	ConfirmClose         bool                 `json:"confirmClose,omitempty"`
 	KeepAwake            string               `json:"keepAwake,omitempty"`
 	AppIcon              string               `json:"appIcon,omitempty"`

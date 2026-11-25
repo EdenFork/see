@@ -24,6 +24,7 @@ type treeFilter struct {
 	toList    bool                // the tree is to take the keys, as Down in the field asks
 	savedOpen []string            // the folders open before filtering began
 	saved     bool
+	hidden    *hiddenNameRules
 }
 
 // filtering reports whether the tree shows a filter's matches.
@@ -34,6 +35,14 @@ func (a *App) filtering() bool { return strings.TrimSpace(a.filter.query) != "" 
 // clears.
 func (a *App) syncFilter() {
 	f := &a.filter
+	if rules := a.hiddenRules(); f.hidden != rules {
+		f.hidden, f.forQuery = rules, ""
+		for _, dir := range a.dirs {
+			if dir.loaded {
+				a.computeNested(dir)
+			}
+		}
+	}
 	q := strings.TrimSpace(f.query)
 	if q == "" {
 		if f.saved {
