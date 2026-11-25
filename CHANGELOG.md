@@ -2,6 +2,18 @@
 
 User-facing changes are grouped by release. Earlier releases are documented on the [Releases page](https://github.com/wibus-wee/see/releases).
 
+## 0.3.9.eden
+
+### Added
+
+- Hide file and folder names in the project navigator with one regular expression per line in Settings → General. Any matching rule hides the entry. Invalid edits show the line number and keep the previous rules active.
+- Hover over inline Git blame to see the commit details and open the commit in the Git log.
+
+### Fixed
+
+- Restore immediate link feedback when holding Cmd over an editor symbol.
+- Select and preview entries in the call hierarchy by clicking their rows.
+
 ## 0.3.8
 
 ### Added
