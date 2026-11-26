@@ -2,6 +2,31 @@
 
 User-facing changes are grouped by release. Earlier releases are documented on the [Releases page](https://github.com/wibus-wee/see/releases).
 
+## 0.3.10.eden
+
+- 从本版起，See 会在 EdenFork/see 检查更新，手动检查和后台检查使用同一份已签名的 macOS arm64 更新包。使用 0.3.9.eden 的用户请先手动下载安装本版。
+- 可在设置中开启子 Git 仓库发现，在同一工作区查看多个仓库的改动。调用层级面板和正则表达式试验台都支持拖动调整大小。
+- 编辑器新增右键菜单。查看提交差异时可复制指向该次提交和所选行的永久链接，命令面板支持按命令 ID 或英文名称搜索。
+- 修复滚动和编辑后行内类型提示消失或错位、Git 历史计数不准，以及离线时反复自动抓取的问题。
+
+## 0.3.10
+
+### Added
+
+- Open an editor context menu for navigation, symbol actions, formatting, editing, history and comparison, copying, and sharing.
+- Use the Regex Playground as a movable, resizable floating window that can span editor panes and remembers its geometry per workspace.
+- Copy host permalinks from commit file diffs and revision comparisons, pinned to the commit being read; lines selected on the diff's new side become the link anchor.
+
+### Changed
+
+- Lead workspace trust prompts with the decision, explain what language servers may do, and make inspector tabs and empty states clearer.
+
+### Fixed
+
+- Keep inlay type and parameter hints anchored through edits instead of letting them vanish or drift while the language server catches up.
+- Correct Git log details: show incoming and unpushed arrows only on genuine mainline commits, count the full history exactly, keep Load More clear of rows, middle-truncate long tags, and back off automatic fetches while offline.
+- Give icon-only controls, toggles, fields, placeholders, menus, and tips localized accessible names and states.
+
 ## 0.3.9.eden
 
 ### Added
@@ -13,6 +38,21 @@ User-facing changes are grouped by release. Earlier releases are documented on t
 
 - Restore immediate link feedback when holding Cmd over an editor symbol.
 - Select and preview entries in the call hierarchy by clicking their rows.
+
+## 0.3.9
+
+### Added
+
+- Hover a line's trailing inline blame to see the commit author, date, message, and hash in a quiet Quick Help-style card; choose the hash to open the commit in Git Log. The card also works in plain-text files and untrusted workspaces.
+- Find commands in the palette by their stable dotted id or English name in any UI language, and see the dotted id under each command title.
+
+### Fixed
+
+- Select and preview the chosen call when clicking a row in Call Hierarchy.
+- Show the editor's Cmd-hover link immediately while holding Cmd, rather than waiting for a language-server hover response.
+- Keep inlay type and parameter hints visible while scrolling instead of flickering off until each new language-server response.
+- Apply the editor line-height preference to row layout, including after preference resets and across workspace windows.
+- On Linux, show the launcher when See starts from the desktop and avoid quitting the app when switching projects from the titlebar menu.
 
 ## 0.3.8
 

@@ -100,10 +100,11 @@ func (a *App) tabFile(g *group, tab string) string {
 	if v.localHistory != nil {
 		return v.localHistory.path
 	}
-	if v.page() || v.cli || a.git.root == "" {
+	root := a.gitDiffRoot(v)
+	if v.page() || v.cli || root == "" {
 		return ""
 	}
-	return workspace.DocPath(a.root, a.realRoot, filepath.Join(a.git.root, filepath.FromSlash(v.name)))
+	return workspace.DocPath(a.root, a.realRoot, filepath.Join(root, filepath.FromSlash(v.name)))
 }
 func (g *group) hasDocument(path string) bool { return g.has(path) || g.has(markdownTab(path)) }
 
@@ -234,6 +235,7 @@ func (a *App) removeGroup(g *group) {
 			a.focus = gs[0]
 		}
 	}
+	a.closeRegexPlaygroundForSource(g, "")
 }
 
 // addTab puts path in g at index at (its end when out of range), or
@@ -538,6 +540,7 @@ func (a *App) closeTab(g *group, path string) {
 	if len(g.order) == 0 && len(a.groups()) > 1 {
 		a.removeGroup(g)
 	}
+	a.closeRegexPlaygroundForSource(g, docPath)
 	if p := a.tabFile(g, g.active); a.focus == g && p != "" {
 		a.revealInTree(p)
 	}
@@ -734,6 +737,7 @@ func (a *App) moveTab(from *group, path string, to *group, s side, at int) {
 		a.removeGroup(from)
 	}
 	a.activateIn(to, path)
+	a.closeRegexPlaygroundForSource(from, tabPath(path))
 }
 
 // splitActive shows the focused group's document in a new group at s
@@ -796,7 +800,7 @@ func (a *App) splitActive(s side) {
 		} else if v != nil && v.oldBuffer != nil {
 			ng.diffs = map[string]*gitDiffTab{path: a.newCLIBufferDiff(v.oldBuffer, v.newBuffer, v.name)}
 		} else if v != nil && v.change {
-			nv := &gitDiffTab{name: v.name, staged: v.staged, change: true}
+			nv := &gitDiffTab{name: v.name, root: v.root, staged: v.staged, change: true}
 			hunk, _ := v.state.CurrentHunk()
 			a.setGitChangeView(nv, gitChangeView{file: v.patch, partial: v.partial, untracked: v.untracked}, hunk)
 			ng.diffs = map[string]*gitDiffTab{path: nv}

@@ -31,7 +31,7 @@ func (a *App) quickOpenPanel(c *ui.Context) {
 			panel.Children(func() {
 				ui.Row(c).Padding(4, 8).Gap(8).AlignItems(ui.Center).Children(func() {
 					symbolIcon(c, icSearch, 20, colors(c).Muted)
-					in := ui.TextInput(c, &q.query).Placeholder(locales.MsgOpenQuickly()).FontSize(20).Grow(1).AutoFocus().Background(ui.Transparent).BorderWidth(0)
+					in := ui.TextInput(c, &q.query).Label(locales.MsgOpenQuickly()).Placeholder(locales.MsgOpenQuickly()).FontSize(20).Grow(1).AutoFocus().Background(ui.Transparent).BorderWidth(0)
 					// The field has the keyboard: it takes the list's keys.
 					switch {
 					case in.Submitted():
@@ -124,10 +124,13 @@ func (a *App) quickRow(c *ui.Context, i int) {
 	}
 	if strings.HasPrefix(q.query, ">") || strings.HasPrefix(q.query, ":") {
 		enabled := true
-		for _, cmd := range commands() {
-			if commandLabel(cmd.name) == r.Path {
-				enabled = a.commandEnabled(cmd.name)
-				break
+		shortcut, id := "", ""
+		if i < len(q.commands) {
+			cmd := q.commands[i]
+			enabled = a.commandEnabled(cmd.id)
+			id = cmd.id
+			if cmd.key != "" {
+				shortcut = keyLabel(cmd.mods, cmd.key)
 			}
 		}
 		row := ui.Row(c.Key(r.Path)).FillWidth().Padding(8).Gap(8).Radius(8).AlignItems(ui.Center).Disabled(!enabled)
@@ -136,12 +139,18 @@ func (a *App) quickRow(c *ui.Context, i int) {
 		}
 		row.OnClick(func() { a.chooseQuick(i) })
 		row.Children(func() {
-			ui.Text(c, r.Path).Grow(1).SingleLine().Ellipsis("…").TruncateMiddle().MinWidth(0)
-			for _, cmd := range commands() {
-				if commandLabel(cmd.name) == r.Path && cmd.key != "" {
-					ui.Text(c, keyLabel(cmd.mods, cmd.key)).TextColor(colors(c).Muted)
-					break
+			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Children(func() {
+				ui.Text(c, r.Path).SingleLine().Ellipsis("…").TruncateMiddle().MinWidth(0)
+				if id != "" {
+					color := colors(c).Muted
+					if i == q.sel {
+						color = ui.RGBA(0xff, 0xff, 0xff, 0.75)
+					}
+					ui.Text(c, id).FontSize(11).TextColor(color).SingleLine().Ellipsis("…").MinWidth(0)
 				}
+			})
+			if shortcut != "" {
+				ui.Text(c, shortcut).TextColor(colors(c).Muted)
 			}
 		})
 		return

@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"see/internal/languages"
 	"see/locales"
 	"slices"
@@ -19,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
@@ -77,13 +77,15 @@ func (p *poster) load() platform.Scheduler {
 // App is the reader's state. It lives on the UI thread: background work
 // hands its results back through post, which runs them there.
 type App struct {
-	post         *poster // runs fn on the UI thread, then redraws
-	trustChanged func()
-	host         platform.Desktop // the window and the desktop around it
-	windowWidth  int
-	windowHeight int
-	startLSP     func(logf func(string, ...any)) langserver.Starter
-	cfg          *config.Config
+	post                *poster // runs fn on the UI thread, then redraws
+	trustChanged        func()
+	editorPrefsChanged  func()
+	gitDiscoveryChanged func()
+	host                platform.Desktop // the window and the desktop around it
+	windowWidth         int
+	windowHeight        int
+	startLSP            func(logf func(string, ...any)) langserver.Starter
+	cfg                 *config.Config
 
 	diffWhitespaceHidden bool
 
@@ -135,7 +137,7 @@ type App struct {
 	navCancel           context.CancelFunc
 	finding             bool // a navigation request is on its way
 	findingLabel        string
-	navigationMenuState [6]bool
+	navigationMenuState [8]bool
 	scopeSeq            uint64
 	scopeCancel         context.CancelFunc
 	scopePendingState   *editor.State
@@ -150,6 +152,7 @@ type App struct {
 	counterpartMiss     counterpartFeedback
 	peek                *peekState // a definition peeked at from an editor
 	regexPlayground     *regexPlayground
+	regexToolWindow     regexToolWindowState
 	references          referenceList
 	referencesEmpty     bool         // the last pin found no references
 	codeActions         *codeActions // the code actions a request found, for its menu
@@ -306,6 +309,7 @@ type doc struct {
 	languageInlays    []editor.Inlay
 	readerCache       *readerCache
 	parameterInlays   []editor.Inlay
+	inlayVersion      uint64 // version of the cached hint offsets
 	inlayKey          inlayKey
 	inlaySeq          int
 	inlayTimer        *time.Timer
@@ -326,6 +330,7 @@ type doc struct {
 	foldFolder        *foldFolder // the language's Folder, once wrapped
 	baseLang          *editor.Language
 	wrappedLang       *editor.Language
+	wrappedInlays     bool
 	wrappedFold       bool // wrappedLang folds by the server's ranges
 	manualLanguage    *editor.Language
 	languageManual    bool
@@ -451,7 +456,7 @@ func (a *App) openFolderDialog() {
 func (a *App) openWorkspace(dir string) {
 	root, err := workspace.CanonicalRoot(dir)
 	if err != nil {
-		a.welcomeNote = fmt.Sprintf("Could not open %s: %v", dir, describeErr(err))
+		a.welcomeNote = locales.Catalog.Format(i18n.Locale(), "msgCouldNotOpenSPath", map[string]any{"path": dir, "reason": describeErr(err)})
 		if errors.Is(err, fs.ErrNotExist) && slices.Contains(a.cfg.Recent, dir) {
 			a.cfg.RemoveRecent(dir)
 			a.saveConfig()
@@ -559,6 +564,8 @@ func (a *App) closeWorkspace() {
 	// Persist the session before throwing its documents away. In particular,
 	// a standalone window may own entries in the shared empty-root session.
 	a.saveConfig()
+	a.regexPlayground = nil
+	a.regexToolWindow.resetWorkspace()
 	a.gen++
 	if a.wsCancel != nil {
 		a.wsCancel()
@@ -1283,87 +1290,8 @@ func (a *App) newEditor(g *group, d *doc) *editor.State {
 	st.OnDefinition = func(offset int) { a.goToDefinition(g, d, offset) }
 	st.OnCompletion = func(req editor.CompletionRequest) { a.requestCompletions(g, d, st, req) }
 	a.loadGitBase(d)
-	st.ContextMenu = func(menu *ui.Menu) {
-		if menu.Item(commandLabel("Test Regex")).Chosen() {
-			a.openRegexPlaygroundFor(g, d, st)
-		}
-		menu.Separator()
-		if menu.Item(commandLabel("Peek Definition")).Shortcut(ui.Alt, ui.KeyF12).Disabled(!a.navigationEnabled(d.path, "peek")).Chosen() {
-			a.peekDefinition(g, d, st.Buffer.Offset(st.CursorPos()))
-		}
-		if menu.Item(commandLabel("Show Code Actions")).Disabled(!a.codeActionsEnabled(d.path)).Chosen() {
-			a.codeActionAtPoint(g, d, st, false)
-		}
-		formatDoc, formatRange := a.formatEnabled(d.path)
-		if menu.Item(commandLabel("Format Document")).Disabled(!formatDoc).Shortcut(ui.Shift|ui.Alt, ui.KeyF).Chosen() {
-			a.formatAt(g, d, st, false)
-		}
-		if menu.Item(commandLabel("Format Selection")).Disabled(!formatRange || !hasSelection(st)).Chosen() {
-			a.formatAt(g, d, st, true)
-		}
-		for _, kind := range []string{"implementation", "typeDefinition"} {
-			item := menu.Item(commandLabel(navigationCommand(kind))).Disabled(!a.navigationEnabled(d.path, kind))
-			if kind == "implementation" {
-				item.Shortcut(ui.Cmd, ui.KeyF12)
-			}
-			if item.Chosen() {
-				a.goToLocation(g, d, st.Buffer.Offset(st.CursorPos()), kind)
-			}
-		}
-		if b, ok := a.lineBlame(d, st); ok && !b.Uncommitted {
-			if menu.Item(commandLabel("Show Line's Commit in Git Log")).Chosen() {
-				a.revealLogCommit(b.Hash)
-			}
-			menu.Separator()
-		}
-		if menu.Item("Find References").Shortcut(ui.Shift, ui.KeyF12).Chosen() {
-			a.focus = g
-			a.findUsagesAt(false, g.pointerAnchor, g.pointerInEditor)
-		}
-		if menu.Item("Find Callers").Chosen() {
-			a.focus = g
-			a.findUsagesAt(true, g.pointerAnchor, g.pointerInEditor)
-		}
-		if menu.Item(commandLabel("Show Call Hierarchy")).Chosen() {
-			a.focus = g
-			a.showCallHierarchyAt(g)
-		}
-		if menu.Item(commandLabel("Show Type Hierarchy")).Disabled(!a.navigationEnabled(d.path, "typeHierarchy")).Chosen() {
-			a.focus = g
-			a.showTypeHierarchyAt(g)
-		}
-		if !d.untitled && menu.Item("Show File History").Chosen() {
-			a.showFileHistory(d.path)
-		}
-		localHistoryItem := menu.Item(commandLabel("Show Local History")).Disabled(!a.localHistorySupported(d))
-		if !a.localHistorySupported(d) {
-			localHistoryItem.Tooltip(localHistoryText("localHistoryUnsupported"))
-		}
-		if localHistoryItem.Chosen() {
-			a.showLocalHistory(g, d)
-		}
-		if menu.Item(commandLabel("Compare with Revision…")).Chosen() {
-			a.showRevision(g, d, "")
-		}
-		a.linkItems(menu, d, st)
-		menu.Separator()
-		_, _, mods, key := editAllScopeShortcut(runtime.GOOS)
-		item := menu.Item(commandLabel("Edit All in Scope")).Disabled(!a.scopeEditCommandEnabled(g, d, st)).Shortcut(mods, key)
-		if item.Chosen() {
-			a.editAllInScopeFor(g, d, st)
-		}
-		menu.Separator()
-		if menu.Item(commandLabel("Expand Selection")).Shortcut(ui.Alt|ui.Shift, ui.KeyUp).Chosen() {
-			a.expandSelection()
-		}
-		if menu.Item(commandLabel("Shrink Selection")).Shortcut(ui.Alt|ui.Shift, ui.KeyDown).Chosen() {
-			a.shrinkSelection()
-		}
-		renameItem := menu.Item(commandLabel("Rename Symbol")).Disabled(!a.renameEnabled(d.path)).Shortcut(0, ui.KeyF2)
-		if renameItem.Chosen() {
-			a.renameSymbolAt(g, d, st)
-		}
-	}
+	st.ReplaceContextMenu = true
+	st.ContextMenu = func(menu *ui.Menu) { a.editorContextMenu(menu, g, d, st) }
 	st.OnHover = func(r editor.HoverRequest) { a.hoverAt(d, st, r) }
 	st.RenderHover = func(c *ui.Context, panel ui.Element, h *editor.HoverCard) {
 		a.renderHover(st, c, panel, h)
@@ -1827,8 +1755,8 @@ func (a *App) openLanguageDocument(m *langserver.Server, ctx context.Context, d 
 }
 
 // upgradeLanguage wraps the document buffer's language in a
-// highlighter layering what its server answers — semantic tokens over
-// the tokenizer's, folding ranges for the gutter — once it is up. It
+// highlighter layering semantic tokens and folding ranges over the tokenizer,
+// and following edits to keep cached inlay offsets current. It
 // runs when the document first syncs, and again whenever a server
 // takes over — start, restart and retry all reach it through
 // openLanguageDocument — and when a lane learns its capability.
@@ -1847,7 +1775,7 @@ func (a *App) upgradeLanguage(d *doc, m *langserver.Server, client langserver.Cl
 	if d.wrappedLang == lang {
 		baseLang = d.baseLang
 	}
-	sem, fold := false, false
+	sem, fold, inlays := false, false, false
 	if sc, ok := client.(semanticTokensClient); ok && sc.HasSemanticTokens() &&
 		baseLang.Tokenizer != nil && baseLang.Highlighter == nil {
 		sem = true // the semantic layer needs a tokenizer to build on
@@ -1858,7 +1786,11 @@ func (a *App) upgradeLanguage(d *doc, m *langserver.Server, client langserver.Cl
 		d.foldRanges != nil && (baseLang.Tokenizer != nil || baseLang.Highlighter != nil) {
 		fold = true
 	}
-	if !sem && !fold || d.wrappedLang == lang && (!fold || d.wrappedFold) {
+	if ic, ok := client.(inlayHintClient); ok && ic.HasInlayHints() &&
+		(baseLang.Tokenizer != nil || baseLang.Highlighter != nil) {
+		inlays = true
+	}
+	if !sem && !fold && !inlays || d.wrappedLang == lang && (!fold || d.wrappedFold) && (!inlays || d.wrappedInlays) {
 		return // nothing to add, or already wrapped with all it gets
 	}
 	ctx, gen := a.wsCtx, a.gen
@@ -1892,8 +1824,15 @@ func (a *App) upgradeLanguage(d *doc, m *langserver.Server, client langserver.Cl
 			d.foldFolder = &foldFolder{base: base, doc: d}
 			base = d.foldFolder
 		}
+		if inlays {
+			if d.inlayVersion != text.Version() {
+				a.clearInlayHints(d)
+			}
+			base = trackInlayEdits(base, d)
+		}
 		return base
 	}
+	d.wrappedInlays = inlays
 	d.baseLang, d.wrappedLang, d.wrappedFold = baseLang, &wrapped, fold
 	d.buf.SetLanguage(&wrapped)
 }
@@ -2005,7 +1944,8 @@ func (a *App) findUsagesAt(callers bool, anchor ui.Point, validAnchor bool) {
 				if skipped > 0 {
 					a.note(locales.MsgResultsAreNotInLocalFiles(), false)
 				} else {
-					a.note("No "+name+locales.MsgFound(), false)
+					display := referenceTitle(name)
+					a.note(locales.Catalog.Format(i18n.Locale(), "msgNoSFound", map[string]any{"name": display}), false)
 				}
 				return
 			}

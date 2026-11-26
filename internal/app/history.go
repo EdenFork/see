@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
 
@@ -22,20 +23,22 @@ import (
 const historyPage = 200
 
 type gitHistory struct {
-	commits  []git.Commit
-	lanes    []string // the lanes the commits read leave for the next page
-	lanesW   int      // the most lanes a row has, for the graph's width
-	all      bool     // every branch, not only HEAD's
-	path     string   // only commits that changed it, as the log's file scope
-	head     string   // HEAD when the history was read
-	loading  bool
-	done     bool // no commits are left to read
-	stale    bool // to be read again
-	err      string
-	seq      uint64
-	list     ui.ListState
-	unpushed map[string]bool // HEAD's commits the branch it tracks has not
-	incoming map[string]bool
+	commits   []git.Commit
+	lanes     []string // the lanes the commits read leave for the next page
+	lanesW    int      // the most lanes a row has, for the graph's width
+	all       bool     // every branch, not only HEAD's
+	path      string   // only commits that changed it, as the log's file scope
+	head      string   // HEAD when the history was read
+	loading   bool
+	done      bool // no commits are left to read
+	stale     bool // to be read again
+	err       string
+	seq       uint64
+	list      ui.ListState
+	total     int // how many commits the walk has, -1 while unknown
+	mainline  map[string]bool // commits the unpushed and incoming counts are of
+	unpushed  map[string]bool // HEAD's commits the branch it tracks has not
+	incoming  map[string]bool
 }
 
 // commitView is a commit open in an editor.
@@ -81,10 +84,21 @@ func (a *App) loadHistory(reset bool) {
 	go func() {
 		commits, err := git.LogFile(ctx, root, all, skip, historyPage, path)
 		lanes = git.Graph(commits, lanes)
-		var unpushed, incoming map[string]bool
+		var unpushed, incoming, mainline map[string]bool
+		total := -1
 		if reset {
 			unpushed = git.Unpushed(ctx, root)
 			incoming = git.Incoming(ctx, root)
+			mainline = map[string]bool{}
+			for hash := range unpushed {
+				mainline[hash] = true
+			}
+			for hash := range incoming {
+				mainline[hash] = true
+			}
+			if path == "" {
+				total = git.CountCommits(ctx, root, all)
+			}
 		}
 		a.post.Post(func() {
 			if a.gen != gen || h.seq != seq {
@@ -97,7 +111,7 @@ func (a *App) loadHistory(reset bool) {
 			}
 			if reset {
 				h.commits, h.lanesW, h.unpushed = nil, 0, unpushed
-				h.incoming = incoming
+				h.incoming, h.mainline, h.total = incoming, mainline, total
 			}
 			h.commits = append(h.commits, commits...)
 			h.lanes, h.head, h.done = lanes, head, len(commits) < historyPage
@@ -118,7 +132,7 @@ func (a *App) gitChangesHeader(c *ui.Context) {
 			count = len(a.git.branchPanel.files)
 		}
 	}
-	a.gitSectionHeader(c, "Changes", count, &a.git.changesClosed, func() {
+	a.gitSectionHeader(c, locales.MsgChanges(), count, &a.git.changesClosed, func() {
 		a.branchDiffModePicker(c)
 		if a.git.changesClosed || a.git.branchDiffMode == compareBaseMode {
 			return
@@ -128,13 +142,13 @@ func (a *App) gitChangesHeader(c *ui.Context) {
 			staged = staged || gitChangeInSection(ch, true)
 			unstaged = unstaged || gitChangeInSection(ch, false)
 		}
-		if staged && glyphButton(c, icMinus, "Unstage All Changes", "Unstage All Changes", false, a.git.busy).Clicked() {
+		if staged && glyphButton(c, icMinus, locales.MsgUnstageAllChanges(), locales.MsgUnstageAllChanges(), false, a.git.busy).Clicked() {
 			a.stageAllGitChanges(true)
 		}
-		if unstaged && glyphButton(c, icPlus, "Stage All Changes", "Stage All Changes", false, a.git.busy).Clicked() {
+		if unstaged && glyphButton(c, icPlus, locales.MsgStageAllChanges(), locales.MsgStageAllChanges(), false, a.git.busy).Clicked() {
 			a.stageAllGitChanges(false)
 		}
-		if len(a.git.changes) > 0 && glyphButton(c, icStash, "Stash Changes", "Stash Changes…", a.git.stashing, a.git.busy).Clicked() {
+		if len(a.git.changes) > 0 && glyphButton(c, icStash, locales.MsgStashChanges(), locales.MsgStashChanges()+"…", a.git.stashing, a.git.busy).Clicked() {
 			if a.git.stashing {
 				a.endStash()
 			} else {
@@ -145,11 +159,11 @@ func (a *App) gitChangesHeader(c *ui.Context) {
 			ui.Spinner(c).FontSize(10).Tooltip(a.git.syncing)
 		}
 		a.syncButtons(c)
-		tip := "Refresh Status"
+		tip := locales.MsgRefreshStatus()
 		if a.hasRemote() {
-			tip = "Fetch and Refresh Status"
+			tip = locales.MsgFetchAndRefreshStatus()
 		}
-		if glyphButton(c, icRefresh, "Refresh", tip, false, a.git.busy).Clicked() {
+		if glyphButton(c, icRefresh, locales.MsgRefresh(), tip, false, a.git.busy).Clicked() {
 			a.fetchAndRefresh()
 		}
 	})
@@ -159,7 +173,7 @@ func (a *App) gitChangesHeader(c *ui.Context) {
 // the choice of every branch or HEAD's at its end.
 func (a *App) gitHistoryHeader(c *ui.Context) {
 	h := &a.git.history
-	a.gitSectionHeader(c, "History", -1, &a.git.historyClosed, func() {
+	a.gitSectionHeader(c, locales.MsgHistory(), -1, &a.git.historyClosed, func() {
 		if a.git.historyClosed {
 			return
 		}
@@ -170,11 +184,11 @@ func (a *App) gitHistoryHeader(c *ui.Context) {
 		if h.all {
 			tip = fmt.Sprintf(locales.MsgShowOnlySAndUpstream(), a.git.branch)
 		}
-		if glyphButton(c, icBranches, "All Branches", tip, h.all, false).Clicked() {
+		if glyphToggle(c, icBranches, locales.MsgAllBranches(), tip, h.all, false).Clicked() {
 			h.all, h.stale = !h.all, true
 			a.syncHistory()
 		}
-		if glyphButton(c, icGit, "Show Log", "Show the Log in a Tab", false, false).Clicked() {
+		if glyphButton(c, icGit, locales.MsgShowLog(), locales.MsgShowTheLogInATab(), false, false).Clicked() {
 			a.openGitLog()
 		}
 	})
@@ -283,12 +297,16 @@ func (a *App) historyRow(c *ui.Context, i int) {
 	}
 	cm := h.commits[i]
 	open := a.focus.active == commitTab(cm.Hash)
-	unpushed := h.unpushed[cm.Hash]
+	// The arrows belong to HEAD's lane alone: of every branch, a commit
+	// that is also unpushed or incoming is not one to push or pull here.
+	mainline := h.mainline == nil || h.mainline[cm.Hash]
+	unpushed := mainline && h.unpushed[cm.Hash]
+	incoming := mainline && h.incoming[cm.Hash]
 	tip := cm.Short + " " + cm.Subject
 	if unpushed {
 		tip += "\n\nNot pushed yet"
 	}
-	if h.incoming[cm.Hash] {
+	if incoming {
 		tip += "\n\n" + logText("gitIncomingCommit")
 	}
 	row := ui.Row(c.Key(cm.Hash)).FillWidth().Height(historyRowHeight).Padding(0, 8, 0, 0).Gap(historyGap).AlignItems(ui.Center).Radius(6).
@@ -302,10 +320,10 @@ func (a *App) historyRow(c *ui.Context, i int) {
 	}
 	row.OnClick(func() { a.openCommit(cm) })
 	row.ContextMenu(func(m *ui.Menu) {
-		if m.Item("Copy Commit Hash").Chosen() {
+		if m.Item(locales.MsgCopyCommitHash()).Chosen() {
 			c.Services().WriteClipboard(cm.Hash)
 		}
-		if m.Item("Copy Subject").Chosen() {
+		if m.Item(locales.MsgCopySubject()).Chosen() {
 			c.Services().WriteClipboard(cm.Subject)
 		}
 		a.commitRowItems(m, c, cm)
@@ -322,7 +340,7 @@ func (a *App) historyRow(c *ui.Context, i int) {
 				if unpushed {
 					ui.Text(c, "↑").FontSize(11).Bold().TextColor(c.Theme().Accent).Shrink(0)
 				}
-				if h.incoming[cm.Hash] {
+				if incoming {
 					ui.Text(c, "↓").FontSize(11).Bold().TextColor(c.Theme().Accent).Shrink(0)
 				}
 			})
@@ -350,10 +368,10 @@ func authors(cm git.Commit) string {
 	case 0:
 		return cm.Author
 	case 1:
-		return cm.Author + " and " + cm.CoAuthors[0].Name
+		return locales.Catalog.Format(i18n.Locale(), "msgAuthorAndCoAuthor", map[string]any{"author": cm.Author, "coauthor": cm.CoAuthors[0].Name})
 	}
 	n := len(cm.CoAuthors)
-	return fmt.Sprintf("%s and %d other%s", cm.Author, n, plural(n))
+	return locales.Catalog.Format(i18n.Locale(), "msgAuthorAndNOthers", map[string]any{"author": cm.Author, "count": n})
 }
 
 // shortDate is when, as short as a list has room for, as Peek's and
@@ -381,7 +399,10 @@ func refBadge(c *ui.Context, name string, current bool) {
 	if current {
 		bg, fg = c.Theme().Accent.Alpha(0.18), c.Theme().Accent
 	}
-	ui.Text(c, name).FontSize(10).Bold().TextColor(fg).Background(bg).Padding(0, 5).Radius(4).SingleLine().Shrink(2)
+	// MinWidth(0) lets the badge give way inside its column: without it
+	// the text keeps its full width and the column's clip cuts it
+	// mid-glyph, without even the ellipsis.
+	ui.Text(c, name).FontSize(10).Bold().TextColor(fg).Background(bg).Padding(0, 5).Radius(4).SingleLine().Ellipsis("…").TruncateMiddle().MinWidth(0).Shrink(2)
 }
 
 // drawGraphRow draws a commit's row of the graph: the lanes passing by,
@@ -462,11 +483,11 @@ func (a *App) openCommit(cm git.Commit) {
 	g.preview = key
 	a.activateIn(g, key)
 	a.term.maximized = false
-	gen, ctx, root := a.gen, a.wsCtx, a.git.root
+	gen, scopeSeq, ctx, root := a.gen, a.git.scopeSeq, a.wsCtx, a.git.root
 	go func() {
 		d, err := git.Show(ctx, root, cm.Hash)
 		a.post.Post(func() {
-			if a.gen != gen {
+			if a.gen != gen || a.git.scopeSeq != scopeSeq {
 				return
 			}
 			v.loading, v.details = false, d
@@ -504,6 +525,11 @@ func (a *App) openCommitFile(g *group, cm git.Commit, f git.FileStat) {
 			}
 			v := a.newGitDiffTab(patches[0], f.Path, false)
 			v.rev, v.hash, v.oldPath = cm.Short, hash, f.OldPath
+			v.state.LineSelection = true
+			v.state.NoLineNumbers = false
+			v.state.OnLineSelection = func(r editor.DiffLineRange) {
+				v.lineSel, v.lineSelOn = r, true
+			}
 			if g.diffs == nil {
 				g.diffs = map[string]*gitDiffTab{}
 			}
@@ -519,6 +545,25 @@ func (a *App) openCommitFile(g *group, cm git.Commit, f git.FileStat) {
 			a.activateIn(g, key)
 		})
 	}()
+}
+
+// commitFileBar is the bar under a commit's file open as a diff: the
+// commit it is of, and the permalink of the lines selected at it.
+func (a *App) commitFileBar(c *ui.Context, v *gitDiffTab) {
+	p := colors(c)
+	ui.Row(c).FillWidth().Height(30).Padding(0, 8).Gap(6).AlignItems(ui.Center).
+		BorderWidth(1, 0, 0, 0).BorderColor(p.Separator).Children(func() {
+		ui.Text(c, v.rev).FontSize(11).TextColor(p.Muted).SingleLine()
+		if v.oldPath != "" {
+			ui.Text(c, filepath.ToSlash(v.oldPath)+" → "+filepath.ToSlash(v.name)).FontSize(11).TextColor(p.Muted).SingleLine().Ellipsis("…").Shrink(1)
+		}
+		ui.Box(c).Grow(1)
+		if v.state != nil {
+			add, del := v.state.Stats()
+			ui.Text(c, fmt.Sprintf("+%d −%d", add, del)).FontSize(11).TextColor(p.Muted)
+		}
+		a.diffLinkButton(c, v, a.commitFileLinkTarget(v))
+	})
 }
 
 // fileCommit is the commit f's diff is read from: a stash's untracked
@@ -553,12 +598,12 @@ func (a *App) commitContent(c *ui.Context, g *group, v *commitView) {
 			ui.Column(c).FillWidth().Gap(8).Children(func() {
 				a.personLine(c, git.Person{Name: cm.Author, Email: cm.Email}, "", when)
 				for _, p := range cm.CoAuthors {
-					a.personLine(c.Key(p.Email), p, "Co-author", p.Email)
+					a.personLine(c.Key(p.Email), p, locales.MsgCoAuthor(), p.Email)
 				}
 			})
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Wrap().Children(func() {
 				ui.Text(c, cm.Hash).FontSize(12).TextColor(colors(c).Muted).Selectable()
-				if glyphButton(c, icCopy, "Copy Commit Hash", "Copy Commit Hash", false, false).Clicked() {
+				if glyphButton(c, icCopy, locales.MsgCopyCommitHash(), locales.MsgCopyCommitHash(), false, false).Clicked() {
 					c.Services().WriteClipboard(cm.Hash)
 					a.note(locales.MsgCopied()+cm.Short+".", false)
 				}
@@ -570,7 +615,7 @@ func (a *App) commitContent(c *ui.Context, g *group, v *commitView) {
 				if link := a.commitLink(cm.Hash); link != "" {
 					ui.Box(c).Grow(1)
 					host := hostName(a.git.web)
-					if ui.Button(c, locales.MsgOpenOn()+host).FontSize(12).Tooltip(link).Clicked() {
+					if ui.Button(c, locales.Catalog.Format(i18n.Locale(), "editorContextOpenOnHost", map[string]any{"host": host})).FontSize(12).Tooltip(link).Clicked() {
 						c.Services().OpenURL(link)
 					}
 				}

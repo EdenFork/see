@@ -79,6 +79,8 @@ type settingsState struct {
 	fontSize            float64
 	termFontSize        float64
 	lineNumbers         int
+	pageGuideDraft      string
+	pageGuideShown      int
 	softWrapList        ui.ListState
 	serverInstall       string
 	appearance          int
@@ -118,6 +120,15 @@ func (a *App) settingsChanged() {
 	a.post.Post(func() {})
 }
 
+func (a *App) gitAutoDiscoverSettingChanged() {
+	a.settingsChanged()
+	if a.gitDiscoveryChanged != nil {
+		a.gitDiscoveryChanged()
+	} else {
+		a.refreshGitDiscovery()
+	}
+}
+
 // applyEditorPrefs gives an editor the settings of the Editor pane.
 func (a *App) applyEditorPrefs(st *editor.State) {
 	st.Font = ui.Font{
@@ -130,6 +141,7 @@ func (a *App) applyEditorPrefs(st *editor.State) {
 	if a.cfg.EditorLineHeight > 0 {
 		st.Font.LineHeight = float32(a.cfg.EditorLineHeight)
 	}
+	st.LineHeight = float32(a.cfg.EditorLineHeight)
 	st.SoftWrap = a.cfg.SoftWrapForLanguage(documentLanguageName(st.Buffer))
 	st.Whitespace = editor.WhitespaceSelection
 	if a.cfg.ShowInvisibles {
@@ -166,6 +178,14 @@ func (a *App) applyEditorPrefsAll() {
 	}
 }
 
+func (a *App) applyEditorPrefsAcrossWindows() {
+	if a.editorPrefsChanged != nil {
+		a.editorPrefsChanged()
+		return
+	}
+	a.applyEditorPrefsAll()
+}
+
 func (a *App) applyDiffPrefs(diff *editor.DiffState) {
 	diff.Font = ui.Font{
 		Family:   a.cfg.FontFamily,
@@ -177,6 +197,7 @@ func (a *App) applyDiffPrefs(diff *editor.DiffState) {
 	if a.cfg.EditorLineHeight > 0 {
 		diff.Font.LineHeight = float32(a.cfg.EditorLineHeight)
 	}
+	diff.LineHeight = float32(a.cfg.EditorLineHeight)
 	if a.cfg.EditorNoLigatures {
 		if diff.Font.Features == "" {
 			diff.Font.Features = "-liga, -calt"
@@ -432,13 +453,13 @@ func (a *App) settingsContent(c *ui.Context, bar ui.TitleBar) {
 	// The title bar: back and forward on a pill of glass, then the title.
 	ui.Row(c).FillWidth().Height(max(bar.Height, settingsBarHeight)).Padding(0, 20, 0, 16).Gap(12).AlignItems(ui.Center).DragWindow().Children(func() {
 		ui.Row(c).Height(32).Radius(16).Padding(0, 4).Gap(0).AlignItems(ui.Center).Material(glass.Glass{}).Children(func() {
-			back := iconButtonWithState(c, icBack, "Back", "Back", false, len(s.back) == 0, 13)
+			back := iconButtonWithState(c, icBack, locales.MsgBack(), locales.MsgBack(), false, len(s.back) == 0, 13)
 			if back.Clicked() && len(s.back) > 0 {
 				s.forward = append(s.forward, s.pane)
 				s.pane, s.back = s.back[len(s.back)-1], s.back[:len(s.back)-1]
 			}
 			ui.Box(c).Size(1, 16).Background(theme.Of(c).Separator)
-			fwd := iconButtonWithState(c, icForward, "Forward", "Forward", false, len(s.forward) == 0, 13)
+			fwd := iconButtonWithState(c, icForward, locales.MsgForward(), locales.MsgForward(), false, len(s.forward) == 0, 13)
 			if fwd.Clicked() && len(s.forward) > 0 {
 				s.back = append(s.back, s.pane)
 				s.pane, s.forward = s.forward[len(s.forward)-1], s.forward[:len(s.forward)-1]
@@ -602,6 +623,12 @@ func (a *App) generalPane(c *ui.Context) {
 			}
 		},
 		func() {
+			labeled(c, locales.AutoDiscoverGitRepositories(), locales.AutoDiscoverGitRepositoriesDescription())
+			if ui.Switch(c, &a.cfg.GitAutoDiscover).Label(locales.AutoDiscoverGitRepositories()).Changed() {
+				a.gitAutoDiscoverSettingChanged()
+			}
+		},
+		func() {
 			labeled(c, locales.MsgHiddenNames(), locales.MsgHideMatchingFilesAndFoldersInTheProject())
 			if ui.TextInput(c, &a.cfg.HiddenNames).Label(locales.MsgHiddenNames()).Placeholder(".DS_Store").WidthPercent(48).MaxWidth(200).Changed() {
 				a.settingsChanged()
@@ -748,7 +775,7 @@ func (a *App) editorPane(c *ui.Context) {
 	card(c,
 		func() {
 			labeled(c, locales.MsgLineNumbers(), locales.MsgRelativeNumbersCountFromTheCaretSLine())
-			if ui.Segmented(c, &s.lineNumbers, "On", locales.MsgRelative(), locales.MsgOff()).Label(locales.MsgLineNumbers()).Changed() {
+			if ui.Segmented(c, &s.lineNumbers, locales.MsgOn(), locales.MsgRelative(), locales.MsgOff()).Label(locales.MsgLineNumbers()).Changed() {
 				a.cfg.LineNumbers = s.lineNumbers
 				a.applyEditorPrefsAll()
 				a.settingsChanged()
@@ -770,11 +797,37 @@ func (a *App) editorPane(c *ui.Context) {
 		},
 		func() {
 			labeled(c, locales.PageGuide(), locales.PageGuideDescription())
-			column := float64(a.cfg.PageGuideColumn())
-			if ui.NumberInput(c, &column, 1, config.MaxPageGuideColumn, 1).
-				Label(locales.PageGuideColumn()).Width(104).Disabled(!a.cfg.EditorShowPageGuide).Changed() {
-				a.cfg.EditorPageGuide = int(column)
-				a.settingsChanged()
+			column := a.cfg.PageGuideColumn()
+			if s.pageGuideShown == 0 || s.pageGuideShown != column {
+				s.pageGuideDraft, s.pageGuideShown = fmt.Sprint(column), column
+			}
+			field := ui.TextInput(c, &s.pageGuideDraft).Label(locales.PageGuideColumn()).Width(64).
+				Disabled(!a.cfg.EditorShowPageGuide)
+			apply := func(n int) {
+				n = max(1, min(n, config.MaxPageGuideColumn))
+				s.pageGuideDraft, s.pageGuideShown = fmt.Sprint(n), n
+				if a.cfg.EditorPageGuide != n {
+					a.cfg.EditorPageGuide = n
+					a.settingsChanged()
+				}
+			}
+			switch {
+			case field.Changed():
+				if n, err := strconv.Atoi(strings.TrimSpace(s.pageGuideDraft)); err == nil && n >= 1 && n <= config.MaxPageGuideColumn {
+					if a.cfg.EditorPageGuide != n {
+						s.pageGuideShown = n
+						a.cfg.EditorPageGuide = n
+						a.settingsChanged()
+					}
+				}
+			case field.Shortcut(0, ui.KeyUp):
+				apply(column + 1)
+			case field.Shortcut(0, ui.KeyDown):
+				apply(column - 1)
+			}
+			if !field.Focused() && s.pageGuideDraft != fmt.Sprint(column) {
+				// What was typed and left, invalid, shows the value again.
+				s.pageGuideDraft, s.pageGuideShown = fmt.Sprint(column), column
 			}
 			if ui.Switch(c, &a.cfg.EditorShowPageGuide).Label(locales.ShowPageGuide()).Changed() {
 				a.settingsChanged()
@@ -825,7 +878,7 @@ func (a *App) editorPane(c *ui.Context) {
 			ui.Text(c, fmt.Sprintf("%g", height)).TextColor(theme.Of(c).Muted)
 			if ui.Stepper(c, &height, 1, 3, 0.1).Label(locales.MsgEditorLineHeight()).Changed() {
 				a.cfg.EditorLineHeight = height
-				a.applyEditorPrefsAll()
+				a.applyEditorPrefsAcrossWindows()
 				a.settingsChanged()
 			}
 		},
@@ -1223,7 +1276,7 @@ func (a *App) searchPane(c *ui.Context) {
 func (a *App) shortcutsPane(c *ui.Context) {
 	rows := []struct{ what, mods, key string }{}
 	for _, cmd := range commands() {
-		rows = append(rows, struct{ what, mods, key string }{cmd.name, cmd.mods, cmd.key})
+		rows = append(rows, struct{ what, mods, key string }{commandLabel(cmd.id), cmd.mods, cmd.key})
 	}
 	var fns []func()
 	for _, r := range rows {
@@ -1258,6 +1311,7 @@ func (a *App) advancedPane(c *ui.Context) {
 				def.SetPath(a.cfg.Path())
 				def.SavedFindQueries = a.cfg.SavedFindQueries
 				*a.cfg = *def
+				a.applyEditorPrefsAcrossWindows()
 				a.settingsChanged()
 			}
 		},

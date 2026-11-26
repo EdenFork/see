@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 
 	"see/internal/git"
@@ -33,6 +34,22 @@ func (a *App) maybeFetchGit(now time.Time) {
 		!a.git.lastFetch.IsZero() && now.Sub(a.git.lastFetch) < gitFetchInterval {
 		return
 	}
+	// Offline stands auto-fetch down whole: no process, no failure count,
+	// no log. Nothing is scheduled to lift it — the fetch or push the
+	// user runs when the network is back does, so recovery costs nothing
+	// while the machine is away and nothing once it returns.
+	if a.git.offline {
+		return
+	}
+	// A fetch that cannot reach its remote backs off instead of spinning
+	// every two minutes: the next try is a fetch interval later per
+	// failure, up to eight.
+	if a.git.fetchFailures > 0 {
+		backoff := gitFetchInterval << min(a.git.fetchFailures-1, 3)
+		if now.Sub(a.git.lastFetch) < backoff {
+			return
+		}
+	}
 	a.runSyncGit("Fetching…", "", true, "fetch", "--all", "--prune")
 }
 
@@ -43,7 +60,7 @@ func (a *App) runSyncGit(doing, done string, background bool, args ...string) {
 	a.git.busy, a.git.syncing = true, doing
 	a.git.autoFetching = background
 	a.git.lastFetch = time.Now()
-	ctx, root, gen := a.wsCtx, a.git.root, a.gen
+	ctx, root, gen, scopeSeq := a.wsCtx, a.git.root, a.gen, a.git.scopeSeq
 	go func() {
 		if background {
 			var cancel context.CancelFunc
@@ -52,18 +69,28 @@ func (a *App) runSyncGit(doing, done string, background bool, args ...string) {
 		}
 		_, err := git.Network(ctx, root, args...)
 		a.post.Post(func() {
-			if a.gen != gen {
+			if a.gen != gen || a.git.scopeSeq != scopeSeq {
 				return
 			}
 			a.git.busy, a.git.syncing = false, ""
 			a.git.autoFetching = false
 			if err != nil {
 				if background {
-					a.logf("git auto-fetch: %v", err)
+					// A background failure the network explains marks the app
+					// offline once, quietly: the fetch was never the user's,
+					// and the log line would repeat with every retry.
+					if git.Reachable(err) {
+						a.git.fetchFailures++
+						a.logf("git auto-fetch: %v", err)
+					} else {
+						a.git.offline = true
+					}
 				} else {
+					a.git.offline = !git.Reachable(err)
 					a.note(locales.MsgGit()+gitErrLine(err), true)
 				}
 			} else {
+				a.git.fetchFailures, a.git.offline = 0, false
 				if background {
 					// The status read that follows reports newly incoming
 					// commits; a fetch of the user's does not, they are
@@ -79,6 +106,7 @@ func (a *App) runSyncGit(doing, done string, background bool, args ...string) {
 				}
 			}
 			a.refreshGit()
+			a.refreshGitWorkingCopies()
 		})
 	}()
 }
@@ -121,21 +149,21 @@ func (a *App) syncButtons(c *ui.Context) {
 	if a.git.upstream != "" {
 		tracks = " (" + a.git.upstream + ")"
 	}
-	pull := "Pull" + tracks
+	pull := locales.MsgPull() + tracks
 	if a.git.behind > 0 {
-		pull = fmt.Sprintf("Pull %d incoming commit%s%s", a.git.behind, plural(a.git.behind), tracks)
+		pull = locales.Catalog.Format(i18n.Locale(), "msgPullDIncomingCommits", map[string]any{"count": a.git.behind, "tracks": tracks})
 	}
-	if countButton(c, icPull, "Pull", pull, a.git.behind, a.git.busy || a.git.upstream == "").Clicked() {
+	if countButton(c, icPull, locales.MsgPull(), pull, a.git.behind, a.git.busy || a.git.upstream == "").Clicked() {
 		a.gitPull()
 	}
-	push := "Push" + tracks
+	push := locales.MsgPush() + tracks
 	switch {
 	case a.git.ahead > 0:
-		push = fmt.Sprintf("Push %d commit%s%s", a.git.ahead, plural(a.git.ahead), tracks)
+		push = locales.Catalog.Format(i18n.Locale(), "msgPushDCommits", map[string]any{"count": a.git.ahead, "tracks": tracks})
 	case a.git.upstream == "":
-		push = "Push " + a.git.branch + " to " + a.git.remotes[0]
+		push = locales.Catalog.Format(i18n.Locale(), "msgPushSToTheRemoteS", map[string]any{"branch": a.git.branch, "remote": a.git.remotes[0]})
 	}
-	if countButton(c, icPush, "Push", push, a.git.ahead, a.git.busy).Clicked() {
+	if countButton(c, icPush, locales.MsgPush(), push, a.git.ahead, a.git.busy).Clicked() {
 		a.gitPush()
 	}
 }

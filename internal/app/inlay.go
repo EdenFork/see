@@ -17,14 +17,19 @@ type inlayHintClient interface {
 	InlayHints(ctx context.Context, uri string, r lsp.Range) ([]lsp.InlayHint, error)
 }
 
-// inlaySettle is how long scrolling must stop before hints refresh.
+// inlaySettle is how long scrolling or editing must stop before hints refresh.
 const inlaySettle = 100 * time.Millisecond
 
-// syncInlayHints asks the document's server for the hints of the lines
-// on screen and fills languageInlays with them. It runs on a scroll
-// settle and on every buffer version change; a reply that arrives after
-// the buffer or the view moved on is dropped.
+// syncInlayHints refreshes the visible range after scrolling or editing settles.
+// Cached hints follow edits through the highlighter until a fresh reply arrives.
 func (a *App) syncInlayHints(d *doc, st *editor.State) {
+	if st != nil {
+		// Synchronize the highlighter before inspecting or replaying cached offsets.
+		st.CursorPos()
+	}
+	if d.buf != nil && d.inlayKey.first >= 0 && d.inlayVersion != d.buf.Version() {
+		a.clearInlayHints(d)
+	}
 	m := a.serverFor(d.path)
 	served := m != nil && a.cfg.IsTrusted(a.root)
 	if !served || d.buf == nil || d.lossy || d.plain || st == nil || a.wsCtx == nil {
@@ -53,7 +58,6 @@ func (a *App) syncInlayHints(d *doc, st *editor.State) {
 	if d.inlayCancel != nil {
 		d.inlayCancel()
 	}
-	d.languageInlays, d.parameterInlays = nil, nil // never show the old range's hints over the new text
 	d.inlayKey = key
 	seq, gen := d.inlaySeq, a.gen
 	ctx, cancel := context.WithCancel(a.wsCtx)
@@ -106,7 +110,9 @@ func (a *App) fetchInlayHints(ctx context.Context, d *doc, m *langserver.Server,
 		if !a.cfg.IsTrusted(a.root) {
 			return
 		}
+		a.upgradeLanguage(d, m, c)
 		d.languageInlays, d.parameterInlays = toInlayLanes(hints, snap, enc)
+		d.inlayVersion = snap.Version()
 	})
 }
 
@@ -163,4 +169,7 @@ func (a *App) clearInlayHints(d *doc) {
 		d.inlayCancel = nil
 	}
 	d.languageInlays, d.parameterInlays, d.inlayKey = nil, nil, inlayKey{first: -1}
+	if d.buf != nil {
+		d.inlayVersion = d.buf.Version()
+	}
 }

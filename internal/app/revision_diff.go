@@ -125,7 +125,11 @@ func (a *App) selectRevision(v *gitDiffTab, index int) {
 			lang := languageFor(filepath.Base(path), string(old))
 			before.SetLanguage(lang)
 			after.SetLanguage(lang)
-			v.state = &editor.DiffState{Old: before, New: after, Theme: a.edTheme}
+			v.lineSelOn = false
+			v.state = &editor.DiffState{Old: before, New: after, Theme: a.edTheme, LineSelection: true}
+			v.state.OnLineSelection = func(r editor.DiffLineRange) {
+				v.lineSel, v.lineSelOn = r, true
+			}
 			a.applyDiffPrefs(v.state)
 		})
 	}()
@@ -201,10 +205,10 @@ func (a *App) revisionContent(c *ui.Context, g *group, v *gitDiffTab) {
 				target = localHistoryText("localHistoryCurrentUnsaved")
 			}
 			ui.Text(c, "→ "+target).FontSize(11).SingleLine()
-			if ui.Button(c, "‹").Tooltip(localHistoryText("revisionOlder")).Disabled(r.selected+1 >= len(r.commits)).Clicked() {
+			if ui.Button(c, "‹").Label(localHistoryText("revisionOlder")).Tooltip(localHistoryText("revisionOlder")).Disabled(r.selected+1 >= len(r.commits)).Clicked() {
 				a.selectRevision(v, r.selected+1)
 			}
-			if ui.Button(c, "›").Tooltip(localHistoryText("revisionNewer")).Disabled(r.selected <= 0).Clicked() {
+			if ui.Button(c, "›").Label(localHistoryText("revisionNewer")).Tooltip(localHistoryText("revisionNewer")).Disabled(r.selected <= 0).Clicked() {
 				a.selectRevision(v, r.selected-1)
 			}
 			ui.Box(c).Grow(1)
@@ -212,6 +216,7 @@ func (a *App) revisionContent(c *ui.Context, g *group, v *gitDiffTab) {
 				add, del := v.state.Stats()
 				ui.Text(c, fmt.Sprintf("+%d −%d", add, del)).FontSize(11).TextColor(p.Muted)
 			}
+			a.diffLinkButton(c, v, a.revisionLinkTarget(v))
 			if ui.Button(c, localHistoryText("localHistoryRefresh")).Disabled(r.loading).Clicked() {
 				a.refreshRevision(v)
 			}
@@ -229,7 +234,7 @@ func (a *App) revisionTimeline(c *ui.Context, v *gitDiffTab) {
 				b := ui.ButtonBase(c.Key(struct {
 					hash string
 				}{cm.Hash})).Grow(1).Basis(0).Height(32).Padding(0).Radius(3).KeepFocus().
-					Tooltip(revisionLabel(cm))
+					Label(revisionLabel(cm)).Tooltip(revisionLabel(cm))
 				hovered := b.Hovered()
 				if hovered {
 					b.Background(palette.Pill)

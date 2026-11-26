@@ -93,11 +93,12 @@ func (a *App) inspectorTabs(c *ui.Context) {
 		}
 		segments := []struct {
 			icon  *ui.SVG
+			short string
 			label string
 		}{
-			{icPage, inspectorText("inspectorFileTip")},
-			{icClock, inspectorText("inspectorHistoryTip")},
-			{icQuestion, inspectorText("inspectorQuickHelpTip")},
+			{icPage, inspectorText("inspectorFileShort"), inspectorText("inspectorFileTip")},
+			{icClock, inspectorText("inspectorHistoryShort"), inspectorText("inspectorHistoryTip")},
+			{icQuestion, inspectorText("inspectorQuickHelpShort"), inspectorText("inspectorQuickHelpTip")},
 		}
 		at := parts.Track.AnimateTo("thumb", float32(in.tab), thumbSpring)
 		parts.Track.Children(func() {
@@ -111,7 +112,10 @@ func (a *App) inspectorTabs(c *ui.Context) {
 					if i == in.tab {
 						color = colors(c).Text
 					}
-					symbolIcon(c, s.icon, 14, color)
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						symbolIcon(c, s.icon, 13, color)
+						ui.Text(c, s.short).FontSize(10).TextColor(color).SingleLine()
+					})
 				})
 			}
 		})
@@ -368,7 +372,7 @@ func (a *App) inspectorHistoryPage(c *ui.Context) {
 										TextColor(colors(c).Muted).SingleLine().Ellipsis("…").MinWidth(0).Shrink(1)
 								})
 								compare := ui.ButtonBase(c).Size(22, 22).Padding(0).Radius(4).Center().KeepFocus().
-									Tooltip(commandLabel("Compare with Revision…"))
+									Label(commandLabel("history.compare")).Tooltip(commandLabel("history.compare"))
 								if compare.Hovered() {
 									compare.Background(colors(c).Pill)
 								}
@@ -407,11 +411,11 @@ func (a *App) syncInspectorHistory() {
 		return
 	}
 	h.loading = true
-	seq, gen, ctx, root, path := h.seq, a.gen, a.wsCtx, a.git.root, rel
+	seq, gen, scopeSeq, ctx, root, path := h.seq, a.gen, a.git.scopeSeq, a.wsCtx, a.git.root, rel
 	go func() {
 		commits, err := git.LogFile(ctx, root, false, 0, inspectorHistoryPage, path)
 		a.post.Post(func() {
-			if a.gen != gen || h.seq != seq {
+			if a.gen != gen || a.git.scopeSeq != scopeSeq || h.seq != seq {
 				return
 			}
 			h.loading = false

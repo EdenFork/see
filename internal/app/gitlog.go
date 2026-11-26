@@ -140,7 +140,7 @@ func (a *App) chooseLogCommit(v *gitLogView, cm git.Commit) {
 	v.selected = cm.Hash
 	lc := &logCommit{hash: cm.Hash, commit: cm, loading: true, shown: logFilesAtOnce}
 	v.detail = lc
-	gen, ctx, root := a.gen, a.wsCtx, a.git.root
+	gen, scopeSeq, ctx, root := a.gen, a.git.scopeSeq, a.wsCtx, a.git.root
 	go func() {
 		d, err := git.Show(ctx, root, cm.Hash)
 		var patches []editor.FilePatch
@@ -151,7 +151,7 @@ func (a *App) chooseLogCommit(v *gitLogView, cm git.Commit) {
 			}
 		}
 		a.post.Post(func() {
-			if a.gen != gen || v.detail != lc {
+			if a.gen != gen || a.git.scopeSeq != scopeSeq || v.detail != lc {
 				return
 			}
 			lc.loading = false
@@ -240,6 +240,11 @@ func (a *App) gitLogContent(c *ui.Context, g *group, v *gitLogView) {
 				count = fmt.Sprintf(locales.MsgDOfTheFirstDCommits(), len(rows), len(h.commits))
 				if v.query == "" {
 					count = fmt.Sprintf(locales.MsgDPlusCommits(), len(h.commits))
+					// rev-list counts the whole walk ahead: say how many
+					// there are, not how many are read so far.
+					if h.total > len(h.commits) {
+						count = fmt.Sprintf(locales.MsgDOfDCommits(), len(h.commits), h.total)
+					}
 				}
 			}
 			ui.Text(c, count).FontSize(11).TextColor(colors(c).Muted).SingleLine()
@@ -251,7 +256,7 @@ func (a *App) gitLogContent(c *ui.Context, g *group, v *gitLogView) {
 			if h.all {
 				tip = fmt.Sprintf(locales.MsgShowOnlySAndUpstream(), a.git.branch)
 			}
-			if glyphButton(c, icBranches, "All Branches", tip, h.all, false).Clicked() {
+			if glyphToggle(c, icBranches, locales.MsgAllBranches(), tip, h.all, false).Clicked() {
 				h.all, h.stale = !h.all, true
 				a.syncHistory()
 			}
@@ -308,7 +313,11 @@ func (a *App) gitLogContent(c *ui.Context, g *group, v *gitLogView) {
 						})
 					}
 					if !h.done && !h.loading {
-						ui.Button(c, logText("gitLogLoadMore")).OnClick(func() { a.loadHistory(false) })
+						ui.Row(c).Shrink(0).FillWidth().Padding(6, 12).BorderWidth(1, 0, 0, 0).BorderColor(colors(c).Separator).Children(func() {
+							if ui.Button(c, logText("gitLogLoadMore")).FontSize(12).Clicked() {
+								a.loadHistory(false)
+							}
+						})
 					}
 				})
 			})
@@ -387,14 +396,14 @@ func (a *App) logRow(c *ui.Context, v *gitLogView, cm git.Commit, columns logTab
 	}
 	row.OnClick(func() { a.chooseLogCommit(v, cm) })
 	row.ContextMenu(func(m *ui.Menu) {
-		if m.Item("Open in Tab").Chosen() {
+		if m.Item(locales.MsgOpenInTab()).Chosen() {
 			a.openCommit(cm)
 		}
 		m.Separator()
-		if m.Item("Copy Commit Hash").Chosen() {
+		if m.Item(locales.MsgCopyCommitHash()).Chosen() {
 			c.Services().WriteClipboard(cm.Hash)
 		}
-		if m.Item("Copy Subject").Chosen() {
+		if m.Item(locales.MsgCopySubject()).Chosen() {
 			c.Services().WriteClipboard(cm.Subject)
 		}
 		a.commitRowItems(m, c, cm)
@@ -423,10 +432,12 @@ func (a *App) logRow(c *ui.Context, v *gitLogView, cm git.Commit, columns logTab
 		}
 		ui.Row(c).Grow(1).Shrink(1).Basis(0).Gap(5).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, cm.Subject).FontSize(12).SingleLine().Ellipsis("…").MinWidth(0).Shrink(1)
-			if a.git.history.unpushed[cm.Hash] {
+			h := &a.git.history
+			mainline := h.mainline == nil || h.mainline[cm.Hash]
+			if mainline && h.unpushed[cm.Hash] {
 				ui.Text(c, "↑").FontSize(11).Bold().TextColor(c.Theme().Accent).Shrink(0).Tooltip(locales.MsgNotPushedYet())
 			}
-			if a.git.history.incoming[cm.Hash] {
+			if mainline && h.incoming[cm.Hash] {
 				ui.Text(c, "↓").FontSize(11).Bold().TextColor(c.Theme().Accent).Shrink(0).Tooltip(logText("gitIncomingCommit"))
 			}
 		})
@@ -458,7 +469,7 @@ func (a *App) logCommitContent(c *ui.Context, g *group, lc *logCommit) {
 				})
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, cm.Short).FontSize(12).TextColor(colors(c).Muted).Selectable()
-					if glyphButton(c, icCopy, "Copy Commit Hash", "Copy Commit Hash", false, false).Clicked() {
+					if glyphButton(c, icCopy, locales.MsgCopyCommitHash(), locales.MsgCopyCommitHash(), false, false).Clicked() {
 						c.Services().WriteClipboard(cm.Hash)
 						a.note(locales.MsgCopied()+cm.Short+".", false)
 					}

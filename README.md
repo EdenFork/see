@@ -2,8 +2,8 @@
 
 **See the code. Follow the idea.**
 
-[![Downloads](https://img.shields.io/github/downloads/wibus-wee/see/total?style=flat-square)](https://github.com/wibus-wee/see/releases)
-[![Latest release](https://img.shields.io/github/v/release/wibus-wee/see?style=flat-square)](https://github.com/wibus-wee/see/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/EdenFork/see/total?style=flat-square)](https://github.com/EdenFork/see/releases)
+[![Latest release](https://img.shields.io/github/v/release/EdenFork/see?style=flat-square)](https://github.com/EdenFork/see/releases/latest)
 [![Tests](https://img.shields.io/github/actions/workflow/status/wibus-wee/see/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/wibus-wee/see/actions/workflows/test.yml)
 [![Go version](https://img.shields.io/github/go-mod/go-version/wibus-wee/see?style=flat-square)](go.mod)
 
@@ -15,7 +15,9 @@ See is a desktop app for reading source code. Open a folder and you get its tree
 
 ## Install
 
-Download the latest build from [Releases](https://github.com/wibus-wee/see/releases/latest).
+Apple 芯片 Mac 请从 [EdenFork 发布页](https://github.com/EdenFork/see/releases/latest) 下载经过 Developer ID 签名和 Apple 公证的 DMG。将 See 拖入「应用程序」。使用 `0.3.9.eden` 的用户也需要手动安装一次，从 `0.3.10.eden` 起可在 See 菜单中检查 EdenFork 的后续更新。
+
+其他平台可从[原项目发布页](https://github.com/wibus-wee/see/releases/latest)下载安装。以下为原项目提供的安装包。
 
 | Platform | Package |
 | --- | --- |
@@ -225,6 +227,14 @@ See wires in gopls, tsrs, clangd and cmake-language-server for the files they co
 `name` is what Settings, the toolbar and the logs call the server. `extensions` are the file extensions it covers, `command` the executable and its arguments. `languages`, the LSP language IDs the server reports for them, default to the first; `"env"` adds environment variables and `"initializationOptions"` is sent verbatim when the server starts.
 
 A configured server claims only a file no built-in server covers, and like the built-in ones it runs only in a folder the user trusts — See asks before starting any of them.
+
+## Release
+
+EdenFork 的版本号使用 `X.Y.Z.eden`。提交版本号和更新日志后，在签名 Mac 上设置 `MYGO_UPDATER_PRIVATE_KEY`、`SEE_SIGNING_IDENTITY` 和 `SEE_NOTARY_PROFILE`，运行 `bash scripts/build-eden-release.sh`。脚本从当前提交构建，在 `build/release-X.Y.Z.eden/darwin-arm64` 生成公证安装包和签名更新文件。
+
+将 `vX.Y.Z.eden` 标签推送到 EdenFork，在同名 GitHub Release 中上传 DMG、`update-darwin-arm64.json`、清单引用的 `.tar.gz` 和所有 `.delta`，然后设为 Latest。客户端从 Latest 读取清单，再按清单中的版本标签下载更新包。
+
+### Upstream release process
 
 Prepare user-facing notes from the commits since the last release. Run `python3 scripts/changelog/changelog.py context` to collect the commit messages and changed files; use `--from <tag> --to <ref>` for another range. The [AI drafting prompt](./scripts/changelog/AI-PROMPT.md) explains how to turn that evidence into an Unreleased draft and verify it against the code. Fetch tags first if the checkout is shallow or missing tags.
 

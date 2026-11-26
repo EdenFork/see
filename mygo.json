@@ -1,11 +1,11 @@
 {
   "name": "See",
   "identifier": "io.github.wibus-wee.see",
-  "version": "0.3.9.eden",
+  "version": "0.3.10.eden",
   "out": "build",
   "updates": {
-    "publicKey": "zqudRNfvgRsHbNMYIlH4FywgyKmPrAl4w64zAbhFhFk=",
-    "github": "wibus-wee/see"
+    "publicKey": "COMtETdePidUZxjv1+oMeJG63qftu3yUgkBrpI+l7zU=",
+    "github": "EdenFork/see"
   },
   "macos": {
     "infoPlist": {

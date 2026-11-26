@@ -23,32 +23,34 @@ type tabDrag struct {
 	path   string
 	change *git.Change
 	staged bool
+	root   string
 }
 
 func (a *App) editorArea(c *ui.Context) {
 	if target := a.focusGroupTarget; target != nil && (a.layout.find(target) == nil || target.focusHandle.FocusWithin(c)) {
 		a.focusGroupTarget = nil
 	}
-	ui.Column(c).Fill().Background(colors(c).Editor).Children(func() {
-		ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-			ui.Column(c).Grow(1).FillHeight().Children(func() {
-				a.editorsAndPanel(c, func() {
-					ui.Column(c).Fill().Children(func() {
-						if g := a.maximized; g != nil && a.layout.find(g) != nil && len(a.groups()) > 1 {
-							a.groupView(c, g)
-						} else {
-							a.layoutView(c, a.layout)
-						}
-					})
+	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
+		ui.Column(c).Grow(1).FillHeight().Children(func() {
+			a.editorsAndPanel(c, func() {
+				ui.Column(c.Key("regex-tool-editor-workspace")).Fill().Bind(&a.regexToolWindow.workspaceHandle).Children(func() {
+					if g := a.maximized; g != nil && a.layout.find(g) != nil && len(a.groups()) > 1 {
+						a.groupView(c, g)
+					} else {
+						a.layoutView(c, a.layout)
+					}
+					if p := a.regexPlayground; a.regexToolSourceVisible(p) {
+						a.regexToolWindowView(c, p, a.regexToolWindow.workspaceHandle.Bounds(c), p.group.focusHandle.Bounds(c))
+					}
 				})
 			})
-			if a.inspectorOpen() {
-				ui.Column(c).Width(a.inspectorW()).FillHeight().Shrink(0).Children(func() {
-					a.inspectorDivider(c)
-					a.inspectorView(c)
-				})
-			}
 		})
+		if a.inspectorOpen() {
+			ui.Column(c).Width(a.inspectorW()).FillHeight().Shrink(0).Children(func() {
+				a.inspectorDivider(c)
+				a.inspectorView(c)
+			})
+		}
 	})
 }
 
@@ -227,7 +229,15 @@ func zoneAt(x, y, w, h float32) side {
 func (a *App) dropTab(v *tabDrag, g *group, s side, at int) {
 	a.cancelNav()
 	if v.change != nil {
-		a.showGitDiffIn(*v.change, v.staged, g, s, at)
+		root := v.root
+		if root == "" {
+			root = a.git.root
+		}
+		if workingCopy := a.git.workingCopies[root]; a.cfg.GitAutoDiscover && workingCopy != nil {
+			a.showGitWorkingCopyDiff(root, *v.change, v.staged, g, s, at, workingCopy)
+		} else {
+			a.showGitDiffInRepository(root, *v.change, v.staged, g, s, at, nil)
+		}
 		return
 	}
 	if v.from == nil || !v.from.has(v.path) {
@@ -280,6 +290,21 @@ func (a *App) groupContent(c *ui.Context, g *group) {
 	} else if v != nil {
 		if a.diffChangesHidden(v.state) {
 			a.hiddenWhitespaceDiff(c)
+			return
+		}
+		if v.rev != "" {
+			// A commit's file: the diff over a bar with its permalink,
+			// as the revision comparison's.
+			ui.Column(c).Fill().Children(func() {
+				view := editor.DiffView(c, v.state).Grow(1).FillWidth()
+				if a.focusGroupTarget == g {
+					view.Focus()
+				}
+				if a.focusGroupTarget == nil && view.FocusWithin() {
+					a.focus = g
+				}
+				a.commitFileBar(c, v)
+			})
 			return
 		}
 		view := editor.DiffView(c, v.state).Grow(1).FillWidth()
@@ -572,7 +597,7 @@ func (a *App) document(c *ui.Context, g *group, d *doc) {
 			if visible {
 				height = 264
 			}
-			act := &peekAction{label: commandLabel("Discard Change"), destructive: true, do: func() { a.discardChangeAt(d, st, peek.line) }}
+			act := &peekAction{label: commandLabel("change.discard"), destructive: true, do: func() { a.discardChangeAt(d, st, peek.line) }}
 			a.editorPeekAction(c, bounds, st, peek.line, d.name+" — Git changes", "Close Change Preview", height, visible, act, func() { a.git.peek = nil }, func() {
 				if !visible {
 					a.hiddenWhitespaceDiff(c)
@@ -588,22 +613,19 @@ func (a *App) document(c *ui.Context, g *group, d *doc) {
 				a.peekView(c, p)
 			})
 		}
-		if p := a.regexPlayground; p != nil && p.group == g && p.doc == d {
-			a.regexPlaygroundView(c, bounds, st, p)
-		}
 		if ch := a.choices; ch != nil && ch.g == g && ch.from.Path == d.path {
-			closeLabel := "Close References Preview"
+			closeLabel := locales.MsgCloseReferencesPreview()
 			if ch.title == "definitions" {
-				closeLabel = "Close Definitions Preview"
+				closeLabel = locales.MsgCloseDefinitionsPreview()
 			}
 			if ch.navigation != "" {
 				closeLabel = navigationText(ch.navigation, "Close")
 			}
 			var pin *peekAction
 			if ch.title == "references" {
-				pin = &peekAction{icon: icPin, label: commandLabel("Pin References"), tip: commandLabel("Pin References"), do: func() { a.pinReferences(ch) }}
+				pin = &peekAction{icon: icPin, label: commandLabel("references.pin"), tip: commandLabel("references.pin"), do: func() { a.pinReferences(ch) }}
 			}
-			a.editorPeekAction(c, bounds, st, ch.from.Line, fmt.Sprintf("%d %s", len(ch.locs), ch.title), closeLabel, 264, false,
+			a.editorPeekAction(c, bounds, st, ch.from.Line, fmt.Sprintf("%d %s", len(ch.locs), referenceTitle(ch.title)), closeLabel, 264, false,
 				pin, func() { a.choices = nil }, func() { a.relatedView(c, ch) })
 		}
 		line := d.buf.Line(pos.Line)
@@ -616,8 +638,6 @@ func (a *App) document(c *ui.Context, g *group, d *doc) {
 		a.renameStrip(c, bounds, st, d, gutter)
 		a.codeActionLightbulb(c, g, d, st, bounds, gutter, fontSize, lineHeight)
 		switch {
-		case a.regexPlayground != nil && a.regexPlayground.group == g && a.regexPlayground.doc == d:
-			// The sample editor owns focus while its playground is open.
 		case a.focusEditor == st || a.focusGroupTarget == g:
 			// A navigation went here: the keys read on from it.
 			ed.Focus()
@@ -812,7 +832,7 @@ func (a *App) editorPeekSizedContent(c *ui.Context, bounds ui.Rect, st *editor.S
 						act.do()
 					}
 				}
-				if glyphButton(c, icClose, closeLabel, "Close", false, false).Clicked() {
+				if glyphButton(c, icClose, closeLabel, locales.MsgClose(), false, false).Clicked() {
 					close()
 				}
 			})
@@ -852,7 +872,15 @@ func (a *App) message(c *ui.Context, title, detail, button string, fn func()) {
 }
 
 func (a *App) trustBanner(c *ui.Context) {
-	a.banner(c, colors(c).InfoBg,
-		locales.TrustBanner(filepath.Base(a.root)),
-		[]action{{locales.TrustFolder(), a.trust}, {locales.NotNow(), func() { a.trustAsk, a.afterTrust = false, nil; a.trustDismissed = true }}})
+	// The decision is the lead; what servers may do reads as the detail
+	// under it, or the wall of text buried the buttons the banner exists
+	// for.
+	ui.Row(c).FillWidth().Padding(8, 12).Gap(12).AlignItems(ui.Center).Background(colors(c).InfoBg).Children(func() {
+		ui.Column(c).Grow(1).Shrink(1).Gap(2).Children(func() {
+			ui.Text(c, locales.TrustBannerLead(filepath.Base(a.root))).FontSize(12).FontWeight(600).FillWidth()
+			ui.Text(c, locales.TrustBannerDetail()).FontSize(11).TextColor(colors(c).Muted).FillWidth()
+		})
+		ui.Button(c, locales.TrustFolder()).OnClick(a.trust)
+		ui.Button(c, locales.NotNow()).OnClick(func() { a.trustAsk, a.afterTrust = false, nil; a.trustDismissed = true })
+	})
 }
